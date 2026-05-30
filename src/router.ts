@@ -123,6 +123,22 @@ export function setMessageInterceptor(fn: MessageInterceptorFn): void {
 }
 
 /**
+ * Message-observer hook. Runs near the top of routeInbound after consuming
+ * interceptors and adapter thread-policy normalization, but before
+ * messaging-group / agent resolution. Observers are for durable side effects
+ * that should not consume the message, such as module-owned audit or capture
+ * tables. Multiple modules may register observers; observer failures are logged
+ * and do not stop normal routing.
+ */
+export type MessageObserverFn = (event: InboundEvent) => void | Promise<void>;
+
+const messageObservers: MessageObserverFn[] = [];
+
+export function registerMessageObserver(fn: MessageObserverFn): void {
+  messageObservers.push(fn);
+}
+
+/**
  * Channel-registration hook. Runs when the router sees a mention/DM on a
  * messaging group that has no wirings AND hasn't been denied. The hook is
  * expected to escalate to an owner (card, etc.) and arrange for future
@@ -165,6 +181,14 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
   const adapter = getChannelAdapter(event.channelType);
   if (adapter && !adapter.supportsThreads) {
     event = { ...event, threadId: null };
+  }
+
+  for (const observer of messageObservers) {
+    try {
+      await observer(event);
+    } catch (err) {
+      log.error('Message observer threw', { channelType: event.channelType, platformId: event.platformId, err });
+    }
   }
 
   const isMention = event.message.isMention === true;

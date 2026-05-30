@@ -9,7 +9,7 @@ import { getResource, getResources } from '../crud.js';
 import type { CallerContext } from '../frame.js';
 import { listCommands, register } from '../registry.js';
 
-const GROUP_SCOPE_RESOURCES = new Set(['groups', 'sessions', 'destinations', 'members']);
+const GROUP_SCOPE_RESOURCES = new Set(['groups', 'sessions', 'destinations', 'members', 'expenses']);
 
 function getCliScope(ctx: CallerContext): string | undefined {
   if (ctx.caller !== 'agent') return undefined;

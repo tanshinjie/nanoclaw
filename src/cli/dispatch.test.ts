@@ -90,6 +90,15 @@ register({
 });
 
 register({
+  name: 'expenses-list',
+  description: 'test command (expenses resource)',
+  resource: 'expenses',
+  access: 'open',
+  parseArgs: (raw) => raw,
+  handler: async (args) => ({ echo: args }),
+});
+
+register({
   name: 'wirings-list',
   description: 'test command (wirings resource — not allowed)',
   resource: 'wirings',
@@ -158,6 +167,7 @@ beforeEach(() => {
     sessions: 'agent_group_id',
     destinations: 'agent_group_id',
     members: 'agent_group_id',
+    expenses: 'agent_group_id',
   };
   mockGetResource.mockImplementation((plural: string) =>
     scopeFields[plural] ? { scopeField: scopeFields[plural] } : undefined,
@@ -301,6 +311,19 @@ describe('CLI scope enforcement', () => {
     if (resp.ok) {
       const data = resp.data as { echo: Record<string, unknown> };
       expect(data.echo.group).toBe('g1');
+    }
+  });
+
+  it('group: allows expenses without auto-filling --id', async () => {
+    mockGetContainerConfig.mockReturnValue({ cli_scope: 'group' });
+
+    const resp = await dispatch({ id: '1', command: 'expenses-list', args: { month: '2026-05' } }, agentCtx());
+
+    expect(resp.ok).toBe(true);
+    if (resp.ok) {
+      const data = resp.data as { echo: Record<string, unknown> };
+      expect(data.echo.month).toBe('2026-05');
+      expect(data.echo.id).toBeUndefined();
     }
   });
 

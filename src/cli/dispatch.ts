@@ -48,7 +48,7 @@ export async function dispatch(req: RequestFrame, ctx: CallerContext): Promise<R
     }
 
     if (cliScope === 'group') {
-      const allowed = new Set(['groups', 'sessions', 'destinations', 'members']);
+      const allowed = new Set(['groups', 'sessions', 'destinations', 'members', 'expenses']);
       // Only allow whitelisted resources and general commands (no resource, like help)
       if (cmd.resource && !allowed.has(cmd.resource)) {
         return err(req.id, 'forbidden', `CLI access is scoped to this agent group. Cannot access "${cmd.resource}".`);
