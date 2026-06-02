@@ -29,10 +29,18 @@ import {
 import { findSessionForAgent } from './db/sessions.js';
 import { startTypingRefresh, stopTypingRefresh } from './modules/typing/index.js';
 import { log } from './log.js';
-import { resolveSession, writeSessionMessage, writeOutboundDirect } from './session-manager.js';
-import { wakeContainer } from './container-runner.js';
+import {
+  markContainerStopped,
+  openInboundDb,
+  openOutboundDb,
+  resolveSession,
+  writeOutboundDirect,
+  writeSessionMessage,
+} from './session-manager.js';
+import { isContainerRunning, killContainer, wakeContainer } from './container-runner.js';
+import { resetStuckProcessingRows } from './host-sweep.js';
 import { getSession } from './db/sessions.js';
-import type { AgentGroup, MessagingGroup, MessagingGroupAgent } from './types.js';
+import type { AgentGroup, MessagingGroup, MessagingGroupAgent, Session } from './types.js';
 import type { InboundEvent } from './channels/adapter.js';
 
 function generateId(): string {
@@ -457,6 +465,10 @@ async function deliverToAgent(
       log.debug('Filtered command dropped by gate', { agentGroupId: agent.agent_group_id });
       return;
     }
+    if (gate.action === 'stop') {
+      await stopSessionFromHost(session, deliveryAddr, userId);
+      return;
+    }
     if (gate.action === 'deny') {
       writeOutboundDirect(session.agent_group_id, session.id, {
         id: `deny-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -517,4 +529,67 @@ async function deliverToAgent(
 function messageIdForAgent(baseId: string | undefined, agentGroupId: string): string {
   const id = baseId && baseId.length > 0 ? baseId : generateId();
   return `${id}:${agentGroupId}`;
+}
+
+type DeliveryAddress = {
+  channelType: string;
+  platformId: string;
+  threadId: string | null;
+};
+
+async function stopSessionFromHost(
+  session: Session,
+  deliveryAddr: DeliveryAddress,
+  userId: string | null,
+): Promise<void> {
+  const wasRunning = isContainerRunning(session.id);
+  const stoppedCleanly = await waitForContainerExitAfterKill(session.id);
+
+  // The close/error handlers normally mark stopped, but `/stop` must leave the
+  // central session row consistent even when there was no tracked container or
+  // the Docker close event arrives after this host-level control path returns.
+  markContainerStopped(session.id);
+
+  const inDb = openInboundDb(session.agent_group_id, session.id);
+  const outDb = openOutboundDb(session.agent_group_id, session.id);
+  try {
+    resetStuckProcessingRows(inDb, outDb, session, 'user-stop');
+  } finally {
+    outDb.close();
+    inDb.close();
+  }
+
+  writeOutboundDirect(session.agent_group_id, session.id, {
+    id: `stop-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    kind: 'chat',
+    platformId: deliveryAddr.platformId,
+    channelType: deliveryAddr.channelType,
+    threadId: deliveryAddr.threadId,
+    content: JSON.stringify({ text: 'Stopped. Session is ready for new messages.' }),
+  });
+
+  log.info('Host-level stop command handled', {
+    sessionId: session.id,
+    agentGroupId: session.agent_group_id,
+    userId,
+    wasRunning,
+    stoppedCleanly,
+  });
+}
+
+function waitForContainerExitAfterKill(sessionId: string): Promise<boolean> {
+  if (!isContainerRunning(sessionId)) return Promise.resolve(false);
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const timeout = setTimeout(() => finish(false), 5_000);
+    const finish = (stoppedCleanly: boolean): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolve(stoppedCleanly);
+    };
+
+    killContainer(sessionId, 'user-stop', () => finish(true));
+  });
 }

@@ -270,7 +270,7 @@ export function _resetStuckProcessingRowsForTesting(
   resetStuckProcessingRows(inDb, outDb, session, reason, outDb);
 }
 
-function resetStuckProcessingRows(
+export function resetStuckProcessingRows(
   inDb: Database.Database,
   outDb: Database.Database,
   session: Session,

@@ -376,8 +376,9 @@ export function openOutboundDbRw(agentGroupId: string, sessionId: string): Datab
 
 /**
  * Write a message directly to a session's outbound DB so the host delivery
- * loop picks it up. Used by the command gate to send denial responses
- * without waking a container.
+ * loop picks it up. This is a deliberate host-side exception to the normal
+ * container-owned outbound writer rule; callers must only use it when no
+ * container can concurrently write this session's outbound DB.
  */
 export function writeOutboundDirect(
   agentGroupId: string,
@@ -391,7 +392,7 @@ export function writeOutboundDirect(
     content: string;
   },
 ): void {
-  const db = openOutboundDb(agentGroupId, sessionId);
+  const db = openOutboundDbRw(agentGroupId, sessionId);
   try {
     db.prepare(
       `INSERT OR IGNORE INTO messages_out (id, seq, timestamp, kind, platform_id, channel_type, thread_id, content)

@@ -426,6 +426,80 @@ describe('router', () => {
     expect(wakeContainer).toHaveBeenCalled();
   });
 
+  it('handles /stop on the host without enqueueing it to the agent', async () => {
+    const { routeInbound } = await import('./router.js');
+    const { wakeContainer, isContainerRunning, killContainer } = await import('./container-runner.js');
+    const wakeMock = wakeContainer as unknown as ReturnType<typeof vi.fn>;
+    const runningMock = isContainerRunning as unknown as ReturnType<typeof vi.fn>;
+    const killMock = killContainer as unknown as ReturnType<typeof vi.fn>;
+    wakeMock.mockClear();
+    runningMock.mockReset().mockReturnValue(false);
+    killMock.mockReset();
+
+    await routeInbound({
+      channelType: 'discord',
+      platformId: 'chan-123',
+      threadId: null,
+      message: {
+        id: 'msg-working',
+        kind: 'chat',
+        content: JSON.stringify({ sender: 'User', text: 'please do work' }),
+        timestamp: now(),
+      },
+    });
+
+    const session = findSession('mg-1', null);
+    expect(session).toBeDefined();
+
+    const outDb = new Database(outboundDbPath('ag-1', session!.id));
+    const claimedAt = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    outDb
+      .prepare('INSERT INTO processing_ack (message_id, status, status_changed) VALUES (?, ?, ?)')
+      .run('msg-working:ag-1', 'processing', claimedAt);
+    outDb.close();
+
+    wakeMock.mockClear();
+    runningMock.mockReset().mockReturnValue(true);
+    killMock.mockImplementation((_sessionId: string, _reason: string, onExit?: () => void) => onExit?.());
+
+    await routeInbound({
+      channelType: 'discord',
+      platformId: 'chan-123',
+      threadId: null,
+      message: {
+        id: 'msg-stop',
+        kind: 'chat',
+        content: JSON.stringify({ sender: 'User', text: '/stop' }),
+        timestamp: now(),
+      },
+    });
+
+    expect(killMock).toHaveBeenCalledWith(session!.id, 'user-stop', expect.any(Function));
+    expect(wakeMock).not.toHaveBeenCalled();
+
+    const verifyInDb = new Database(inboundDbPath('ag-1', session!.id));
+    const inboundRows = verifyInDb
+      .prepare('SELECT id, tries, process_after FROM messages_in ORDER BY id')
+      .all() as Array<{ id: string; tries: number; process_after: string | null }>;
+    verifyInDb.close();
+    expect(inboundRows).toHaveLength(1);
+    expect(inboundRows[0].id).toBe('msg-working:ag-1');
+    expect(inboundRows[0].tries).toBe(1);
+    expect(inboundRows[0].process_after).not.toBeNull();
+
+    const verifyOutDb = new Database(outboundDbPath('ag-1', session!.id));
+    const claims = verifyOutDb.prepare("SELECT * FROM processing_ack WHERE status = 'processing'").all();
+    const replies = verifyOutDb.prepare('SELECT content FROM messages_out ORDER BY seq').all() as Array<{
+      content: string;
+    }>;
+    verifyOutDb.close();
+    expect(claims).toEqual([]);
+    expect(replies).toHaveLength(1);
+    expect(JSON.parse(replies[0].content).text).toBe('Stopped. Session is ready for new messages.');
+
+    expect(getSession(session!.id)?.container_status).toBe('stopped');
+  });
+
   it('auto-creates messaging group only when the bot is addressed (mention/DM)', async () => {
     // The router's no-mg branch is escalation-gated: plain chatter on an
     // unknown channel stays silent (no DB writes) so a bot that sits in
