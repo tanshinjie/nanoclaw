@@ -29,6 +29,7 @@ import {
 import { findSessionForAgent } from './db/sessions.js';
 import { startTypingRefresh, stopTypingRefresh } from './modules/typing/index.js';
 import { log } from './log.js';
+import { buildSessionStatusSnapshot, formatSessionStatus } from './session-status.js';
 import {
   markContainerStopped,
   openInboundDb,
@@ -469,6 +470,10 @@ async function deliverToAgent(
       await stopSessionFromHost(session, deliveryAddr, userId);
       return;
     }
+    if (gate.action === 'status') {
+      await statusSessionFromHost(session, deliveryAddr, userId);
+      return;
+    }
     if (gate.action === 'deny') {
       writeOutboundDirect(session.agent_group_id, session.id, {
         id: `deny-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -536,6 +541,48 @@ type DeliveryAddress = {
   platformId: string;
   threadId: string | null;
 };
+
+async function statusSessionFromHost(
+  session: Session,
+  deliveryAddr: DeliveryAddress,
+  userId: string | null,
+): Promise<void> {
+  const text = formatSessionStatus(buildSessionStatusSnapshot(session));
+  await sendHostReply(session, deliveryAddr, text);
+  log.info('Host-level status command handled', {
+    sessionId: session.id,
+    agentGroupId: session.agent_group_id,
+    userId,
+  });
+}
+
+async function sendHostReply(session: Session, deliveryAddr: DeliveryAddress, text: string): Promise<void> {
+  const adapter = getChannelAdapter(deliveryAddr.channelType);
+  if (adapter) {
+    await adapter.deliver(deliveryAddr.platformId, deliveryAddr.threadId, {
+      kind: 'chat',
+      content: { text },
+    });
+    return;
+  }
+
+  if (isContainerRunning(session.id)) {
+    log.warn('Host reply could not be delivered directly while container is running; no active adapter', {
+      sessionId: session.id,
+      channelType: deliveryAddr.channelType,
+    });
+    return;
+  }
+
+  writeOutboundDirect(session.agent_group_id, session.id, {
+    id: `host-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    kind: 'chat',
+    platformId: deliveryAddr.platformId,
+    channelType: deliveryAddr.channelType,
+    threadId: deliveryAddr.threadId,
+    content: JSON.stringify({ text }),
+  });
+}
 
 async function stopSessionFromHost(
   session: Session,

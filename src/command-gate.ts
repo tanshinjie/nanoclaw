@@ -14,11 +14,12 @@ export type GateResult =
   | { action: 'pass' }
   | { action: 'filter' }
   | { action: 'deny'; command: string }
-  | { action: 'stop'; command: '/stop' };
+  | { action: 'stop'; command: '/stop' }
+  | { action: 'status'; command: '/status' };
 
 const FILTERED_COMMANDS = new Set(['/help', '/login', '/logout', '/doctor', '/config', '/remote-control']);
 const ADMIN_COMMANDS = new Set(['/clear', '/compact', '/context', '/cost', '/files']);
-const HOST_CONTROL_COMMANDS = new Set(['/stop']);
+const HOST_CONTROL_COMMANDS = new Set(['/stop', '/status']);
 
 /**
  * Classify a message and decide whether it should reach the container.
@@ -40,7 +41,8 @@ export function gateCommand(content: string, userId: string | null, agentGroupId
 
   const command = text.split(/\s/)[0].toLowerCase().split('@')[0];
 
-  if (HOST_CONTROL_COMMANDS.has(command)) return { action: 'stop', command: '/stop' };
+  if (command === '/stop') return { action: 'stop', command: '/stop' };
+  if (command === '/status') return { action: 'status', command: '/status' };
 
   if (FILTERED_COMMANDS.has(command)) return { action: 'filter' };
 

@@ -500,6 +500,62 @@ describe('router', () => {
     expect(getSession(session!.id)?.container_status).toBe('stopped');
   });
 
+  it('handles /status on the host without enqueueing it to the agent', async () => {
+    const { routeInbound } = await import('./router.js');
+    const { wakeContainer, isContainerRunning } = await import('./container-runner.js');
+    const wakeMock = wakeContainer as unknown as ReturnType<typeof vi.fn>;
+    const runningMock = isContainerRunning as unknown as ReturnType<typeof vi.fn>;
+    wakeMock.mockClear();
+    runningMock.mockReset().mockReturnValue(false);
+
+    await routeInbound({
+      channelType: 'discord',
+      platformId: 'chan-123',
+      threadId: null,
+      message: {
+        id: 'msg-working',
+        kind: 'chat',
+        content: JSON.stringify({ sender: 'User', text: 'please do work' }),
+        timestamp: now(),
+      },
+    });
+
+    const session = findSession('mg-1', null);
+    expect(session).toBeDefined();
+    wakeMock.mockClear();
+
+    await routeInbound({
+      channelType: 'discord',
+      platformId: 'chan-123',
+      threadId: null,
+      message: {
+        id: 'msg-status',
+        kind: 'chat',
+        content: JSON.stringify({ sender: 'User', text: '/status' }),
+        timestamp: now(),
+      },
+    });
+
+    expect(wakeMock).not.toHaveBeenCalled();
+
+    const verifyInDb = new Database(inboundDbPath('ag-1', session!.id));
+    const inboundRows = verifyInDb.prepare('SELECT id FROM messages_in ORDER BY id').all() as Array<{ id: string }>;
+    verifyInDb.close();
+    expect(inboundRows).toHaveLength(1);
+    expect(inboundRows[0].id).toBe('msg-working:ag-1');
+
+    const verifyOutDb = new Database(outboundDbPath('ag-1', session!.id));
+    const replies = verifyOutDb.prepare('SELECT content FROM messages_out ORDER BY seq').all() as Array<{
+      content: string;
+    }>;
+    verifyOutDb.close();
+    expect(replies).toHaveLength(1);
+    const text = JSON.parse(replies[0].content).text as string;
+    expect(text).toContain('NanoClaw status');
+    expect(text).toContain('Queue: 1 due');
+    expect(text).toContain('No message contents were inspected');
+  });
+
   it('auto-creates messaging group only when the bot is addressed (mention/DM)', async () => {
     // The router's no-mg branch is escalation-gated: plain chatter on an
     // unknown channel stays silent (no DB writes) so a bot that sits in
