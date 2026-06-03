@@ -99,6 +99,18 @@ register({
 });
 
 register({
+  name: 'expenses-delete',
+  description: 'delete an expense by id',
+  resource: 'expenses',
+  access: 'open',
+  parseArgs: (raw) => {
+    if (!raw.id) throw new Error('--id is required');
+    return raw;
+  },
+  handler: async (args) => ({ echo: args }),
+});
+
+register({
   name: 'wirings-list',
   description: 'test command (wirings resource — not allowed)',
   resource: 'wirings',
@@ -324,6 +336,19 @@ describe('CLI scope enforcement', () => {
       const data = resp.data as { echo: Record<string, unknown> };
       expect(data.echo.month).toBe('2026-05');
       expect(data.echo.id).toBeUndefined();
+    }
+  });
+
+  it('group: command-level help does not trigger required argument validation', async () => {
+    mockGetContainerConfig.mockReturnValue({ cli_scope: 'group' });
+
+    const resp = await dispatch({ id: '1', command: 'expenses-delete', args: { help: true } }, agentCtx());
+
+    expect(resp.ok).toBe(true);
+    if (resp.ok) {
+      const data = resp.data as string;
+      expect(data).toContain('expenses-delete');
+      expect(data).toContain('expenses-help');
     }
   });
 

@@ -101,6 +101,10 @@ export async function dispatch(req: RequestFrame, ctx: CallerContext): Promise<R
     }
   }
 
+  if (isHelpRequest(req.args)) {
+    return { id: req.id, ok: true, data: renderCommandHelp(cmd) };
+  }
+
   if (ctx.caller !== 'host' && cmd.access === 'approval') {
     const session = getSession(ctx.sessionId);
     if (!session) {
@@ -192,6 +196,21 @@ registerApprovalHandler('cli_command', async ({ session, payload, userId, notify
 
 function err(id: string, code: ErrorCode, message: string): ResponseFrame {
   return { id, ok: false, error: { code, message } };
+}
+
+function isHelpRequest(args: Record<string, unknown>): boolean {
+  const value = args.help ?? args.h;
+  return value === true || value === 'true' || value === '1' || value === 1;
+}
+
+function renderCommandHelp(cmd: NonNullable<ReturnType<typeof lookup>>): string {
+  const lines = [`${cmd.name}: ${cmd.description}`, `Access: ${cmd.access}`, `Resource: ${cmd.resource ?? 'general'}`];
+
+  if (cmd.resource) {
+    lines.push('', `Tip: run \`ncl ${cmd.resource}-help\` for available verbs and fields.`);
+  }
+
+  return lines.join('\n');
 }
 
 function errMsg(e: unknown): string {
