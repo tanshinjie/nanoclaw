@@ -123,6 +123,62 @@ describe('expenses CLI resource', () => {
     expect(row).toEqual({ merchant: 'Receipt Cafe', review_status: 'complete', missing_fields_json: '[]' });
   });
 
+  it('deletes an expense and its linked raw capture record', async () => {
+    const add = await dispatch(
+      {
+        id: 'expense-add-delete-1',
+        command: 'expenses-add',
+        args: {
+          amount: '9.90',
+          merchant: 'Delete Cafe',
+          category: 'food',
+          payment_method: 'card',
+          date: '2026-05-27',
+          source_message_id: 'delete-msg-1',
+          source_platform_id: 'delete-chat-1',
+        },
+      },
+      { caller: 'host' },
+    );
+    expect(add.ok).toBe(true);
+    if (!add.ok) return;
+
+    const expenseId = (add.data as Record<string, unknown>).id as string;
+    const captureId = (add.data as Record<string, unknown>).capture_id as string;
+
+    const deleted = await dispatch(
+      { id: 'expense-delete-1', command: 'expenses-delete', args: { id: expenseId } },
+      { caller: 'host' },
+    );
+
+    expect(deleted.ok).toBe(true);
+    if (deleted.ok) {
+      expect(deleted.data).toMatchObject({
+        deleted: expenseId,
+        deleted_capture_id: captureId,
+        source_message_id: 'delete-msg-1',
+        amount: 9.9,
+        currency: 'SGD',
+        category: 'food',
+      });
+    }
+
+    const db = getDb();
+    expect(db.prepare('SELECT COUNT(*) AS count FROM expenses WHERE id = ?').get(expenseId)).toEqual({ count: 0 });
+    expect(db.prepare('SELECT COUNT(*) AS count FROM expense_captures WHERE id = ?').get(captureId)).toEqual({
+      count: 0,
+    });
+
+    const missing = await dispatch(
+      { id: 'expense-delete-missing', command: 'expenses-delete', args: { id: expenseId } },
+      { caller: 'host' },
+    );
+    expect(missing).toMatchObject({
+      ok: false,
+      error: { code: 'handler-error', message: `expense not found: ${expenseId}` },
+    });
+  });
+
   it('lists and summarizes expenses for a month', async () => {
     await dispatch(
       {

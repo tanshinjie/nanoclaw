@@ -454,6 +454,34 @@ function markReviewed(args: Record<string, unknown>): Record<string, unknown> {
   return row;
 }
 
+function deleteExpense(args: Record<string, unknown>): Record<string, unknown> {
+  const id = asOptionalString(args, 'id');
+  if (!id) throw new Error('--id is required');
+
+  const db = getDb();
+  return db.transaction(() => {
+    const row = selectExpenseById(id);
+    if (!row) throw new Error(`expense not found: ${id}`);
+
+    const captureId = row.capture_id as string;
+    const expenseResult = db.prepare('DELETE FROM expenses WHERE id = ?').run(id);
+    if (expenseResult.changes === 0) throw new Error(`expense not found: ${id}`);
+
+    db.prepare('DELETE FROM expense_captures WHERE id = ?').run(captureId);
+
+    return {
+      deleted: id,
+      deleted_capture_id: captureId,
+      source_message_id: row.source_message_id,
+      amount: row.amount,
+      currency: row.currency,
+      transaction_date: row.transaction_date,
+      merchant: row.merchant,
+      category: row.category,
+    };
+  })();
+}
+
 registerResource({
   name: 'expense',
   plural: 'expenses',
@@ -548,6 +576,11 @@ registerResource({
       access: 'open',
       description: 'Mark an expense as complete after review. Use --id <expense-id>.',
       handler: async (args) => markReviewed(args),
+    },
+    delete: {
+      access: 'open',
+      description: 'Delete an expense and its linked raw capture record. Use --id <expense-id>.',
+      handler: async (args) => deleteExpense(args),
     },
   },
 });
